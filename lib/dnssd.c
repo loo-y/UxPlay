@@ -33,7 +33,11 @@
 #endif
 
 #include "compat.h"
+#ifdef _WIN32
+#include "windows_dns_sd.h"
+#else
 #include <dns_sd.h>
+#endif
 #include "dnssd.h"
 
 #include "dnssdint.h"
@@ -60,14 +64,11 @@
 # else
 #  include <dlfcn.h>
 #  define DNSSD_STDCALL
+#  typedef struct _DNSServiceRef_t *DNSServiceRef;
+#  typedef union _TXTRecordRef_t { char PrivateData[16]; char *ForceNaturalAlignment; } TXTRecordRef;
+#  typedef uint32_t DNSServiceFlags;
+#  typedef int32_t  DNSServiceErrorType;
 # endif
-
-typedef struct _DNSServiceRef_t *DNSServiceRef;
-#ifndef _WIN32
-typedef union _TXTRecordRef_t { char PrivateData[16]; char *ForceNaturalAlignment; } TXTRecordRef;
-#endif
-typedef uint32_t DNSServiceFlags;
-typedef int32_t  DNSServiceErrorType;
 
 typedef void (DNSSD_STDCALL *DNSServiceRegisterReply)
     (

@@ -1,2 +1,6 @@
 build/
 .vscode/
+.local/
+build-manual/
+build3/
+runtime/

@@ -1060,6 +1060,10 @@ that is apparently now fixed (a workaround is to use d3d11)._
 The executable uxplay.exe can also be run without the MSYS2 environment,
 in the Windows Terminal, with `C:\msys64\ucrt64\bin\uxplay`.
 
+If you are using this repository directly on Windows to receive an iPhone screen-mirror session, there is now a helper launcher script
+`scripts/start-iphone-mirroring.ps1` with a short guide in `docs/windows-iphone-mirroring.md`. It starts `uxplay.exe` with the recommended
+Windows sinks and will fall back to the bundled Bluetooth LE beacon when Bonjour service discovery is not running.
+
 There is a new modernized Windows Terminal application available from Microsoft that
 provides various terminals, and can be customized to also provide the MSYS2 terminals.
 See https://www.msys2.org/docs/terminals/ (to make those instructions clearer:
