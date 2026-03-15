@@ -139,6 +139,8 @@ static bool dump_audio = false;
 static unsigned char audio_type = 0x00;
 static unsigned char previous_audio_type = 0x00;
 static bool fullscreen = false;
+static bool topmost = false;
+static uintptr_t embed_hwnd = 0;
 static bool render_coverart = false;
 static std::string coverart_filename = "";
 static std::string metadata_filename = "";
@@ -943,6 +945,8 @@ static void print_info (char *name) {
     printf("          default 1920x1080[@60] (or 3840x2160[@60] with -h265 option)\n");
     printf("-o        Set display \"overscanned\" mode on (not usually needed)\n");
     printf("-fs       Full-screen (only with X11, Wayland, VAAPI, D3D11/12, kms)\n");
+    printf("-top      Keep the video window above other windows (Windows only)\n");
+    printf("-hwnd n   Render video into an existing native window handle n (Windows only)\n");
     printf("-p        Use legacy ports UDP 6000:6001:7011 TCP 7000:7001:7100\n");
     printf("-p n      Use TCP and UDP ports n,n+1,n+2. range %d-%d\n", LOWEST_ALLOWED_PORT, HIGHEST_PORT);
     printf("          use \"-p n1,n2,n3\" to set each port, \"n1,n2\" for n3 = n2+1\n");
@@ -1443,6 +1447,17 @@ static void parse_arguments (int argc, char *argv[]) {
             exit(1);
         } else if (arg == "-fs" ) {
             fullscreen = true;
+        } else if (arg == "-top" ) {
+            topmost = true;
+        } else if (arg == "-hwnd" ) {
+            if (!option_has_value(i, argc, arg, argv[i+1])) exit(1);
+            char *end = NULL;
+            unsigned long long hwnd_value = strtoull(argv[++i], &end, 0);
+            if (*end != '\0' || hwnd_value == 0) {
+                fprintf(stderr, "invalid \"-hwnd %s\"; expected a native window handle value\n", argv[i]);
+                exit(1);
+            }
+            embed_hwnd = (uintptr_t) hwnd_value;
         } else if (arg == "-FPSdata") {
             show_client_FPS_data = true;
         } else if (arg == "-reset") {
@@ -2134,7 +2149,7 @@ extern "C" void video_reset(void *cls, reset_type_t type) {
             video_renderer_destroy();
             video_renderer_init(render_logger, server_name.c_str(), videoflip, video_parser.c_str(), rtp_pipeline.c_str(),
                                 video_decoder.c_str(), video_converter.c_str(), videosink.c_str(),
-                                videosink_options.c_str(), fullscreen, video_sync, h265_support,
+                                videosink_options.c_str(), fullscreen, topmost, embed_hwnd, video_sync, h265_support,
                                 render_coverart, playbin_version, NULL);
             video_renderer_start();
             close_window = false;  // we already closed the window
@@ -3153,7 +3168,7 @@ int main (int argc, char *argv[]) {
     if (use_video) {
         video_renderer_init(render_logger, server_name.c_str(), videoflip, video_parser.c_str(), rtp_pipeline.c_str(),
                             video_decoder.c_str(), video_converter.c_str(), videosink.c_str(),
-                            videosink_options.c_str(), fullscreen, video_sync, h265_support,
+                            videosink_options.c_str(), fullscreen, topmost, embed_hwnd, video_sync, h265_support,
                             render_coverart, playbin_version, NULL);
         video_renderer_start();
 #ifdef __OpenBSD__
@@ -3258,7 +3273,7 @@ int main (int argc, char *argv[]) {
             const char *uri = (url.empty() ? NULL : url.c_str());
             video_renderer_init(render_logger, server_name.c_str(), videoflip, video_parser.c_str(),rtp_pipeline.c_str(),
                                 video_decoder.c_str(), video_converter.c_str(), videosink.c_str(),
-                                videosink_options.c_str(), fullscreen, video_sync, h265_support,
+                                videosink_options.c_str(), fullscreen, topmost, embed_hwnd, video_sync, h265_support,
                                 render_coverart, playbin_version, uri);
             full_video_reset = false;
             video_renderer_start();

@@ -2,5 +2,7 @@ build/
 .vscode/
 .local/
 build-manual/
+build-topmost/
 build3/
 runtime/
+scripts/__pycache__/

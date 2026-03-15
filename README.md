@@ -1064,6 +1064,15 @@ If you are using this repository directly on Windows to receive an iPhone screen
 `scripts/start-iphone-mirroring.ps1` with a short guide in `docs/windows-iphone-mirroring.md`. It starts `uxplay.exe` with the recommended
 Windows sinks and will fall back to the bundled Bluetooth LE beacon when Bonjour service discovery is not running.
 
+For this repository's current local Windows setup, there are now multiple helper entrypoints in the repository root:
+
+- `launch-uxplay-windows.cmd`: known-good console-based mirroring flow
+- `launch-uxplay-windows-no-topmost.cmd`: same flow without forced topmost behavior
+- `launch-uxplay-windows-gui.cmd`: small settings launcher in front of the console-based flow
+- `launch-uxplay-desktop-app.cmd`: `PySide6` desktop host that starts `uxplay.exe`, attaches its renderer window into a dedicated application window, and exposes host-level controls such as topmost toggle and runtime logs
+
+The detailed machine-specific notes are documented in `docs/windows-iphone-mirroring.md`, `docs/windows-successful-mirroring-state.md`, and `handover.md`.
+
 There is a new modernized Windows Terminal application available from Microsoft that
 provides various terminals, and can be customized to also provide the MSYS2 terminals.
 See https://www.msys2.org/docs/terminals/ (to make those instructions clearer:

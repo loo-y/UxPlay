@@ -49,7 +49,7 @@ typedef struct video_renderer_s video_renderer_t;
 
 void video_renderer_init (logger_t *logger, const char *server_name, videoflip_t videoflip[2], const char *parser, const char *rtp_pipeline,
                           const char *decoder, const char *converter, const char *videosink, const char *videosink_options,
-                          bool initial_fullscreen, bool video_sync, bool h265_support, bool coverart_support,
+                          bool initial_fullscreen, bool initial_topmost, uintptr_t embed_hwnd, bool video_sync, bool h265_support, bool coverart_support,
                           guint playbin_version,  const char *uri);
 void video_renderer_start ();
 void video_renderer_stop ();

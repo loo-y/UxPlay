@@ -22,6 +22,10 @@
 
 #include <gst/gst.h>
 #include <gst/app/gstappsrc.h>
+#include <gst/video/videooverlay.h>
+#ifdef _WIN32
+#include <windows.h>
+#endif
 #include "video_renderer.h"
 
 #define SECOND_IN_NSECS 1000000000UL
@@ -41,6 +45,8 @@ static bool first_packet = false;
 static bool sync = false;
 static bool auto_videosink = true;
 static bool hls_video = false;
+static bool topmost = false;
+static uintptr_t video_overlay_hwnd = 0;
 #ifdef X_DISPLAY_FIX
 static bool use_x11 = false;
 #endif
@@ -91,6 +97,11 @@ struct video_renderer_s {
     const char * server_name;
     X11_Window_t * gst_window;
 #endif
+#ifdef _WIN32
+    const char *server_name;
+    HWND native_window;
+    bool topmost_applied;
+#endif
 };
 
 static video_renderer_t *renderer = NULL;
@@ -100,6 +111,8 @@ static char h264[] = "h264";
 static char h265[] = "h265";
 static char hls[]  = "hls";
 static char jpeg[] = "jpeg";
+
+static GstBusSyncReply gstreamer_video_pipeline_bus_sync_handler(GstBus *bus, GstMessage *message, gpointer user_data);
 
 static void append_videoflip (GString *launch, const videoflip_t *flip, const videoflip_t *rot) {
     /* videoflip image transform */
@@ -222,15 +235,83 @@ GstElement *make_video_sink(const char *videosink, const char *videosink_options
     return video_sink;
 }
 
+static void bind_video_overlay_window(GstElement *video_sink, uintptr_t embed_hwnd) {
+#ifdef _WIN32
+    if (!video_sink || !embed_hwnd) {
+        return;
+    }
+    if (!GST_IS_VIDEO_OVERLAY(video_sink)) {
+        logger_log(logger, LOGGER_WARNING, "requested embedded window rendering, but sink does not implement GstVideoOverlay");
+        return;
+    }
+
+    if (g_object_class_find_property(G_OBJECT_GET_CLASS(video_sink), "external-window-only")) {
+        g_object_set(G_OBJECT(video_sink), "external-window-only", TRUE, NULL);
+    }
+    if (g_object_class_find_property(G_OBJECT_GET_CLASS(video_sink), "direct-swapchain")) {
+        g_object_set(G_OBJECT(video_sink), "direct-swapchain", TRUE, NULL);
+    }
+    gst_video_overlay_set_window_handle(GST_VIDEO_OVERLAY(video_sink), (guintptr) embed_hwnd);
+#else
+    (void) video_sink;
+    (void) embed_hwnd;
+#endif
+}
+
+#ifdef _WIN32
+typedef struct {
+    DWORD process_id;
+    HWND hwnd;
+} window_search_t;
+
+static BOOL CALLBACK find_window_by_title(HWND hwnd, LPARAM lParam) {
+    window_search_t *ctx = (window_search_t *) lParam;
+    DWORD process_id = 0;
+
+    if (!IsWindowVisible(hwnd)) {
+        return TRUE;
+    }
+    if (GetWindow(hwnd, GW_OWNER) != NULL) {
+        return TRUE;
+    }
+    GetWindowThreadProcessId(hwnd, &process_id);
+    if (process_id == ctx->process_id) {
+        ctx->hwnd = hwnd;
+        return FALSE;
+    }
+    return TRUE;
+}
+
+static void apply_topmost(video_renderer_t *renderer) {
+    if (!topmost || !renderer || renderer->topmost_applied) {
+        return;
+    }
+
+    if (!renderer->native_window) {
+        window_search_t ctx = { GetCurrentProcessId(), NULL };
+        EnumWindows(find_window_by_title, (LPARAM)&ctx);
+        renderer->native_window = ctx.hwnd;
+    }
+
+    if (renderer->native_window) {
+        SetWindowPos(renderer->native_window, HWND_TOPMOST, 0, 0, 0, 0,
+                     SWP_NOMOVE | SWP_NOSIZE | SWP_NOACTIVATE | SWP_SHOWWINDOW);
+        renderer->topmost_applied = true;
+    }
+}
+#endif
+
 void video_renderer_init(logger_t *render_logger, const char *server_name, videoflip_t videoflip[2], const char *parser, const char * rtp_pipeline,
                           const char *decoder, const char *converter, const char *videosink, const char *videosink_options, 
-                          bool initial_fullscreen, bool video_sync, bool h265_support, bool coverart_support, guint playbin_version, const char *uri) {
+                          bool initial_fullscreen, bool initial_topmost, uintptr_t embed_hwnd, bool video_sync, bool h265_support, bool coverart_support, guint playbin_version, const char *uri) {
     GError *error = NULL;
     GstCaps *caps = NULL;
     bool rtp = (bool) strlen(rtp_pipeline);
     hls_video = (uri != NULL);
     /* videosink choices that are auto */
     auto_videosink = (strstr(videosink, "autovideosink") || strstr(videosink, "fpsdisplaysink"));
+    topmost = initial_topmost;
+    video_overlay_hwnd = embed_hwnd;
 
     logger = render_logger;
     logger_debug = (logger_get_level(logger) >= LOGGER_DEBUG);
@@ -281,6 +362,11 @@ void video_renderer_init(logger_t *render_logger, const char *server_name, video
         renderer_type[i]->textsrc = NULL;
         renderer_type[i]->uri = NULL;
         renderer_type[i]->eos = FALSE;
+#ifdef _WIN32
+        renderer_type[i]->server_name = server_name;
+        renderer_type[i]->native_window = NULL;
+        renderer_type[i]->topmost_applied = false;
+#endif
         if (hls_video) {
             renderer_type[i]->uri = (char *) calloc(strlen(uri) + 1, sizeof(char));
             memcpy(renderer_type[i]->uri, uri, strlen(uri));
@@ -305,6 +391,7 @@ void video_renderer_init(logger_t *render_logger, const char *server_name, video
                 if (!playbin_videosink) {
                     logger_log(logger, LOGGER_ERR, "video_renderer_init: failed to create playbin_videosink");
                 } else {
+                    bind_video_overlay_window(playbin_videosink, video_overlay_hwnd);
                     logger_log(logger, LOGGER_DEBUG, "video_renderer_init: create playbin_videosink at %p", playbin_videosink);
                     g_object_set(G_OBJECT (renderer_type[i]->pipeline), "video-sink", playbin_videosink, NULL);
                 }
@@ -394,6 +481,15 @@ void video_renderer_init(logger_t *render_logger, const char *server_name, video
                 g_clear_error (&error);
             }
             g_assert (renderer_type[i]->pipeline);
+            if (video_overlay_hwnd) {
+                gchar *video_sink_name = g_strdup_printf("%s_%s", videosink, renderer_type[i]->codec);
+                GstElement *video_sink = gst_bin_get_by_name(GST_BIN(renderer_type[i]->pipeline), video_sink_name);
+                if (video_sink) {
+                    bind_video_overlay_window(video_sink, video_overlay_hwnd);
+                    gst_object_unref(video_sink);
+                }
+                g_free(video_sink_name);
+            }
             GstClock *clock = gst_system_clock_obtain();
             g_object_set(clock, "clock-type", GST_CLOCK_TYPE_REALTIME, NULL);
             gst_pipeline_use_clock(GST_PIPELINE_CAST(renderer_type[i]->pipeline), clock);
@@ -438,6 +534,7 @@ void video_renderer_init(logger_t *render_logger, const char *server_name, video
         }
 #endif
         renderer_type[i]->bus = gst_element_get_bus(renderer_type[i]->pipeline);	
+        gst_bus_set_sync_handler(renderer_type[i]->bus, gstreamer_video_pipeline_bus_sync_handler, NULL, NULL);
         gst_element_set_state (renderer_type[i]->pipeline, GST_STATE_READY);
         GstState state;
         GstStateChangeReturn ret = gst_element_get_state (renderer_type[i]->pipeline, &state, NULL, 100 * GST_MSECOND);
@@ -618,6 +715,9 @@ uint64_t video_renderer_render_buffer(unsigned char* data, int *data_len, int *n
         }
         gst_buffer_fill(buffer, 0, data, *data_len);
         gst_app_src_push_buffer (GST_APP_SRC(renderer->appsrc), buffer);
+#ifdef _WIN32
+        apply_topmost(renderer);
+#endif
 #ifdef X_DISPLAY_FIX
         if (renderer->gst_window && !(renderer->gst_window->window) && renderer->use_x11) {
             X11_search_attempts++;
@@ -781,6 +881,24 @@ static void hls_video_seek_to_start_position(GstElement *pipeline) {
             g_print("*** seek to requested_start_position failed\n"); 
         }
     } 
+}
+
+static GstBusSyncReply gstreamer_video_pipeline_bus_sync_handler(GstBus *bus, GstMessage *message, gpointer user_data) {
+    (void) bus;
+    (void) user_data;
+
+    if (!video_overlay_hwnd) {
+        return GST_BUS_PASS;
+    }
+
+    if (gst_is_video_overlay_prepare_window_handle_message(message)) {
+        GstVideoOverlay *overlay = GST_VIDEO_OVERLAY(GST_MESSAGE_SRC(message));
+        gst_video_overlay_set_window_handle(overlay, (guintptr) video_overlay_hwnd);
+        gst_video_overlay_expose(overlay);
+        return GST_BUS_DROP;
+    }
+
+    return GST_BUS_PASS;
 }
 
 static gboolean gstreamer_video_pipeline_bus_callback(GstBus *bus, GstMessage *message, void *loop) {
@@ -967,6 +1085,9 @@ static gboolean gstreamer_video_pipeline_bus_callback(GstBus *bus, GstMessage *m
                 }
             }
         }
+#ifdef _WIN32
+        apply_topmost(renderer);
+#endif
         break;
 #ifdef  X_DISPLAY_FIX
     case GST_MESSAGE_ELEMENT:
